@@ -18,7 +18,8 @@ struct Entry: Identifiable, Hashable {
     @Published var message: String?
     @Published var cacheLabel = ""
     @Published var cacheEpoch = UUID()
-    private var root: URL?
+    @Published private(set) var root: URL?
+    @Published var albums: [Entry] = []
     private var scoped = false
     private var loadTask: Task<Void, Never>?
     init() {
@@ -37,16 +38,25 @@ struct Entry: Identifiable, Hashable {
         if scoped { root?.stopAccessingSecurityScopedResource() }
         root = url; scoped = url.startAccessingSecurityScopedResource()
         if remember, let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) { UserDefaults.standard.set(data, forKey: "folderBookmark") }
+        albums = ((try? Self.readEntries(url)) ?? []).filter { $0.isDirectory }
         browse(url)
+    }
+    func closePreview() {
+        loadTask?.cancel(); selected = nil; image = nil; original = nil; busy = false
+    }
+    nonisolated static func readEntries(_ url: URL) throws -> [Entry] {
+        try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .contentTypeKey], options: [.skipsHiddenFiles]).compactMap { item in
+            let v = try item.resourceValues(forKeys: [.isDirectoryKey, .contentTypeKey, .isSymbolicLinkKey])
+            guard v.isSymbolicLink != true else { return nil }
+            guard v.isDirectory == true || v.contentType?.conforms(to: .image) == true else { return nil }
+            return Entry(url: item, isDirectory: v.isDirectory == true)
+        }.sorted { a, b in a.isDirectory != b.isDirectory ? a.isDirectory : a.url.lastPathComponent.localizedStandardCompare(b.url.lastPathComponent) == .orderedAscending }
     }
     func browse(_ url: URL) {
         loadTask?.cancel(); busy = false; folder = url; selected = nil; image = nil; original = nil
         do {
-            entries = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .contentTypeKey], options: [.skipsHiddenFiles]).compactMap { item in
-                let v = try item.resourceValues(forKeys: [.isDirectoryKey, .contentTypeKey])
-                guard v.isDirectory == true || v.contentType?.conforms(to: .image) == true else { return nil }
-                return Entry(url: item, isDirectory: v.isDirectory == true)
-            }.sorted { a, b in a.isDirectory != b.isDirectory ? a.isDirectory : a.url.lastPathComponent.localizedStandardCompare(b.url.lastPathComponent) == .orderedAscending }
+            entries = try Self.readEntries(url)
+            if url == root { albums = entries.filter { $0.isDirectory } }
         } catch { message = error.localizedDescription }
     }
     var canGoUp: Bool { folder != nil && folder != root }
