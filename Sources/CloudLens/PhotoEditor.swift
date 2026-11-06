@@ -47,7 +47,7 @@ struct PhotoEditor: View {
             Spacer()
             Slider(value: $zoom, in: 1...4).frame(width: 100).help("放大預覽")
             Button("另存 PNG…") { library.save() }.buttonStyle(.borderedProminent)
-        }.buttonStyle(.borderless).padding(.horizontal, 24).padding(.vertical, 12).disabled(library.image == nil)
+        }.buttonStyle(.borderless).padding(.horizontal, 24).padding(.vertical, 12).disabled(library.image == nil || library.busy)
     }
     private var filmstrip: some View {
         ScrollViewReader { proxy in

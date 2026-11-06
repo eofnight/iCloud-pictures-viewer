@@ -20,6 +20,11 @@ struct Entry: Identifiable, Hashable {
     @Published var cacheEpoch = UUID()
     @Published private(set) var root: URL?
     @Published var albums: [Entry] = []
+    @Published var cacheProgress = ""
+    @Published var cachedURLs: Set<URL> = []
+    @Published var isPrefetching = false
+    private var prefetchTask: Task<Void, Never>?
+    private var prefetchID = UUID()
     private var scoped = false
     private var loadTask: Task<Void, Never>?
     init() {
@@ -34,6 +39,7 @@ struct Entry: Identifiable, Hashable {
         if panel.runModal() == .OK, let url = panel.url { open(url) }
     }
     func open(_ url: URL, remember: Bool = true) {
+        stopPrefetch()
         loadTask?.cancel()
         if scoped { root?.stopAccessingSecurityScopedResource() }
         root = url; scoped = url.startAccessingSecurityScopedResource()
@@ -53,10 +59,13 @@ struct Entry: Identifiable, Hashable {
         }.sorted { a, b in a.isDirectory != b.isDirectory ? a.isDirectory : a.url.lastPathComponent.localizedStandardCompare(b.url.lastPathComponent) == .orderedAscending }
     }
     func browse(_ url: URL) {
+        stopPrefetch()
+        entries = []
         loadTask?.cancel(); busy = false; folder = url; selected = nil; image = nil; original = nil
         do {
             entries = try Self.readEntries(url)
             if url == root { albums = entries.filter { $0.isDirectory } }
+            prefetchPhotos()
         } catch { message = error.localizedDescription }
     }
     var canGoUp: Bool { folder != nil && folder != root }
@@ -66,16 +75,11 @@ struct Entry: Identifiable, Hashable {
         loadTask?.cancel(); selected = entry.url; image = nil; original = nil; busy = true
         loadTask = Task {
             do {
-                let cloud = try entry.url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey])
-                if cloud.isUbiquitousItem == true && cloud.ubiquitousItemDownloadingStatus == .notDownloaded {
-                    try FileManager.default.startDownloadingUbiquitousItem(at: entry.url)
-                    for _ in 0..<120 {
-                        try Task.checkCancellation()
-                        let v = try entry.url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
-                        if v.ubiquitousItemDownloadingStatus != .notDownloaded { break }
-                        try await Task.sleep(for: .seconds(1))
-                    }
+                if let preview = await ThumbnailCache.shared.cachedPreview(entry.url) {
+                    try Task.checkCancellation()
+                    image = preview
                 }
+                try await CloudFiles.ensureDownloaded(entry.url)
                 let loaded = await Task.detached(priority: .userInitiated) { () -> NSImage? in
                     var result: NSImage?
                     var error: NSError?
@@ -111,6 +115,46 @@ struct Entry: Identifiable, Hashable {
             if let error = writeError ?? coordinationError { throw error }
         } catch { message = error.localizedDescription }
     }
-    func clearCache() { Task { do { try await ThumbnailCache.shared.clear(); cacheEpoch = UUID(); cacheLabel = "快取已清除" } catch { message = error.localizedDescription } } }
+    func stopPrefetch() {
+        prefetchID = UUID()
+        prefetchTask?.cancel(); prefetchTask = nil
+        isPrefetching = false; cacheProgress = ""
+    }
+    func prefetchPhotos() {
+        let photos = entries.filter { !$0.isDirectory }
+        guard !photos.isEmpty else { return }
+        let id = UUID(); prefetchID = id
+        isPrefetching = true
+        cacheProgress = "預覽快取 0 / \(photos.count)"
+        prefetchTask = Task {
+            var failed = 0
+            for (index, photo) in photos.enumerated() {
+                do {
+                    try Task.checkCancellation()
+                    let ready = try await ThumbnailCache.shared.prepare(photo.url)
+                    try Task.checkCancellation()
+                    guard prefetchID == id else { return }
+                    if ready { cachedURLs.insert(photo.url) } else { failed += 1 }
+                } catch is CancellationError { return }
+                catch {
+                    guard prefetchID == id, !Task.isCancelled else { return }
+                    failed += 1
+                }
+                cacheProgress = "預覽快取 \(index + 1) / \(photos.count)" + (failed > 0 ? " · \(failed) 張失敗" : "")
+            }
+            guard prefetchID == id else { return }
+            isPrefetching = false
+            cacheProgress = failed == 0 ? "\(photos.count) 張預覽已快取" : "快取完成 · \(failed) 張失敗，可重新整理重試"
+        }
+    }
+    func clearCache() {
+        stopPrefetch()
+        Task {
+            do {
+                try await ThumbnailCache.shared.clear()
+                cachedURLs.removeAll(); cacheEpoch = UUID(); cacheLabel = "快取已清除"
+            } catch { message = error.localizedDescription }
+        }
+    }
     func cacheSize() { Task { let bytes = await ThumbnailCache.shared.size(); cacheLabel = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) } }
 }

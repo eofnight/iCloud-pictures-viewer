@@ -153,6 +153,11 @@ struct BrowserView: View {
             Image(systemName: "folder").foregroundStyle(.blue)
             Text(library.folder?.path ?? "開啟資料夾開始瀏覽").lineLimit(1).truncationMode(.middle)
             Spacer()
+            if library.isPrefetching { ProgressView().controlSize(.small) }
+            Text(library.cacheProgress).lineLimit(1)
+            if library.isPrefetching {
+                Button("停止") { library.stopPrefetch() }.buttonStyle(.borderless)
+            }
             Text(library.cacheLabel)
             if library.selected == nil { Text("\(entries.count) 個項目") }
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 10)

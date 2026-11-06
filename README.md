@@ -5,11 +5,12 @@
 ## 相簿介面
 
 - 左側資料夾樹狀導覽，支援展開子資料夾與返回所有相簿。
-- 右側相簿以四格圖片封面、圓角卡片呈現，支援調整卡片大小。
+- 右側相簿以第一張照片作為單張封面、圓角卡片呈現，支援調整卡片大小。
 - 搜尋目前資料夾內的名稱，並以名稱正序／倒序排列。
 - 圖片預覽有底部縮圖列、方向鍵切換、旋轉、裁切、縮放與另存功能。
 - 資訊側欄可查看路徑、圖片尺寸與快取管理。
-- 相簿封面最多搜尋 24 個子資料夾、深度 3 層；雲端未下載圖片顯示下載圖示。
+- 相簿封面依檔名自然排序選取第一張照片；無直接圖片時，最多搜尋 24 個子資料夾、深度 3 層，並下載該張封面。
+- 進入資料夾後依序預載該層所有圖片，顯示完成／失敗張數；切換資料夾、按停止或清除快取會停止後續預載。
 
 ## 使用
 
@@ -27,13 +28,13 @@
 
 - `NSOpenPanel`：使用者授權選取資料夾。
 - Security-scoped bookmarks：記住上次開啟的資料夾，並在下次啟動恢復授權。
-- `FileManager.startDownloadingUbiquitousItem(at:)`：選取雲端檔案時要求下載，畫面顯示等待狀態。
+- `FileManager.startDownloadingUbiquitousItem(at:)`：載入封面、進入資料夾預載或選取雲端檔案時要求下載，畫面顯示等待狀態。
 - `NSFileCoordinator`：協調圖片讀取與輸出檔案寫入。
-- Image I/O：產生 320 像素縮圖，依路徑、修改日期、大小建立快取鍵。
+- Image I/O：產生 320 像素縮圖與 2048 像素預覽快取，依路徑、修改日期、大小建立快取鍵。
 
 此功能瀏覽 **iCloud Drive 檔案**，不包含 iCloud 照片圖庫。照片圖庫存取需另行整合 PhotoKit 與照片授權。
 
-縮圖存於系統 Caches 下的 `CloudLens/Thumbnails`（沙盒版位於應用程式容器內）。未下載的圖片不會為了縮圖主動下載。清除快取不會刪除原圖，也不會移除 macOS 自己保存的 iCloud 本機檔案。
+縮圖存於系統 Caches 下的 `CloudLens/Thumbnails`（沙盒版位於應用程式容器內）。進入資料夾會要求下載該層所有圖片並建立磁碟預覽快取，不將整個資料夾的完整影像同時載入記憶體。預覽載入後，編輯會等待較高解析度影像讀取完成。清除快取會刪除縮圖與預覽檔，不會刪除原圖，也不會移除 macOS 自己保存的 iCloud 本機檔案。
 
 Apple 文件：[檔案授權](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)、[iCloud 下載](https://developer.apple.com/documentation/foundation/filemanager/startdownloadingubiquitousitem(at:))、[資料夾選擇器](https://developer.apple.com/documentation/appkit/nsopenpanel)。
 
@@ -52,4 +53,4 @@ Apple 文件：[檔案授權](https://developer.apple.com/documentation/security
 ./scripts/test.sh
 ```
 
-測試涵蓋旋轉尺寸、裁切尺寸、範圍限制與空選取。實際使用仍需驗證雲端下載與沙盒權限。
+測試涵蓋旋轉、裁切、預覽快取產生、清除後保留原圖、損壞檔案與取消預載。快取測試使用本機暫存圖片，不經檔案協調服務；正式應用程式仍使用 NSFileCoordinator，實際使用仍需驗證雲端下載與沙盒權限。

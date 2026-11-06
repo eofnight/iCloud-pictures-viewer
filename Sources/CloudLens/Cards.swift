@@ -8,19 +8,15 @@ struct AlbumCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             GeometryReader { geometry in
-                let side = (geometry.size.width - 8) / 2
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                    ForEach(0..<4) { index in
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.045))
-                            if covers.indices.contains(index) {
-                                Thumbnail(entry: covers[index], epoch: epoch).frame(width: side, height: side).clipped()
-                            } else {
-                                Image(systemName: "photo").foregroundStyle(.tertiary).font(.title3)
-                            }
-                        }.frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 9))
+                ZStack {
+                    Color.primary.opacity(0.045)
+                    if let first = covers.first {
+                        Thumbnail(entry: first, epoch: epoch, downloadForCover: true)
+                            .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                    } else {
+                        Image(systemName: "folder").font(.system(size: 48)).foregroundStyle(.tertiary)
                     }
-                }
+                }.clipShape(RoundedRectangle(cornerRadius: 13))
             }.aspectRatio(1, contentMode: .fit)
             HStack {
                 Text(entry.url.lastPathComponent).font(.system(size: 14, weight: .semibold)).lineLimit(1)
@@ -60,31 +56,37 @@ struct PhotoCard: View {
     }
 }
 struct Thumbnail: View {
+    @EnvironmentObject var library: Library
     let entry: Entry
     let epoch: UUID
+    var downloadForCover = false
     @State private var image: NSImage?
     var body: some View {
         Group {
             if let image { Image(nsImage: image).resizable().scaledToFill() }
             else { Image(systemName: "icloud.and.arrow.down").font(.title2).foregroundStyle(.tertiary) }
-        }.task(id: "\(entry.id)-\(epoch)") {
+        }.task(id: "\(entry.id)-\(epoch)-\(library.cachedURLs.contains(entry.url))") {
+            if downloadForCover {
+                _ = try? await ThumbnailCache.shared.prepare(entry.url, includePreview: false)
+            }
+            guard !Task.isCancelled else { return }
             image = await ThumbnailCache.shared.thumbnail(entry.url)
         }
     }
 }
 
 // Bounded traversal finds covers for folders organized into several album levels.
-// It reads metadata only; ThumbnailCache never downloads cloud originals for covers.
+// Only the first cover is downloaded, never every image in unopened albums.
 enum AlbumCovers {
     static func find(in folder: URL) -> [Entry] {
         var queue: [(URL, Int)] = [(folder, 0)]
         var result: [Entry] = []
         var visited = 0
-        while !queue.isEmpty && visited < 24 && result.count < 4 {
+        while !queue.isEmpty && visited < 24 && result.count < 1 {
             let (url, depth) = queue.removeFirst()
             visited += 1
             let entries = (try? Library.readEntries(url)) ?? []
-            result.append(contentsOf: entries.filter { !$0.isDirectory }.prefix(4 - result.count))
+            result.append(contentsOf: entries.filter { !$0.isDirectory }.prefix(1 - result.count))
             if depth < 3 {
                 queue.append(contentsOf: entries.filter { $0.isDirectory }.prefix(24).map { ($0.url, depth + 1) })
             }
